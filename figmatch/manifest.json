@@ -1,0 +1,25 @@
+{
+  "name": "FigMatch",
+  "id": "1459516759748911085",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "permissions": ["currentuser"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": [
+      "https://placehold.co",
+      "https://*.firebase.com",
+      "https://*.firebaseio.com",
+      "https://*.firebaseapp.com",
+      "https://*.googleapis.com",
+      "https://firebaseinstallations.googleapis.com",
+      "https://firebaseremoteconfig.googleapis.com",
+      "https://firestore.googleapis.com",
+      "https://identitytoolkit.googleapis.com",
+      "https://www.gstatic.com",
+      "https://*.figma.com"
+    ]
+  }
+}

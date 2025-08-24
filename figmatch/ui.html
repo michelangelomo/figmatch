@@ -1,0 +1,1460 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
+    import { 
+      getFirestore, 
+      collection, 
+      addDoc, 
+      doc, 
+      setDoc, 
+      getDoc, 
+      query, 
+      where, 
+      getDocs,
+      onSnapshot,
+      orderBy
+    } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+
+    // Your web app's Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyCfnpxSOXEdCowLfHcfPY72w1h4cP-0qUw",
+      authDomain: "tinderdesign-fb6aa.firebaseapp.com",
+      projectId: "tinderdesign-fb6aa",
+      storageBucket: "tinderdesign-fb6aa.firebasestorage.app",
+      messagingSenderId: "393453806770",
+      appId: "1:393453806770:web:61cd0a133e3a4352c0d5ab"
+    };
+
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore();
+
+    // Global variables
+    let currentUser = null;
+    let currentProfiles = [];
+    let currentIndex = 0;
+    let startX = 0;
+    let currentX = 0;
+    let isDragging = false;
+    let currentChatMatchId = null;
+    let currentChatName = null;
+    let unsubscribeChat = null;
+
+    // Available interests for profile creation
+    const availableInterests = [
+      "Travel", "Photography", "Hiking", "Coffee", "Cooking", "Technology",
+      "Music", "Fitness", "Art", "Films", "Plants", "Reading", "Gaming",
+      "Dancing", "Yoga", "Food", "Fashion", "Sports"
+    ];
+
+    // UI Helper Functions
+    function showProfileForm() {
+      document.getElementById('profile-form').style.display = 'block';
+      document.getElementById('app-container').style.display = 'none';
+
+      if (currentUser) {
+        document.getElementById('profile-name').value = currentUser.name;
+        document.getElementById('profile-photo').src = currentUser.photoUrl;
+      }
+    }
+
+    function showMainApp() {
+      document.getElementById('profile-form').style.display = 'none';
+      document.getElementById('app-container').style.display = 'block';
+      loadProfiles();
+      loadMatches();
+    }
+
+    function showDisclaimer() {
+      document.getElementById('disclaimer-container').style.display = 'block';
+      document.getElementById('profile-form').style.display = 'none';
+      document.getElementById('app-container').style.display = 'none';
+    }
+
+    window.acceptDisclaimer = function acceptDisclaimer() {
+      document.getElementById('disclaimer-container').style.display = 'none';
+      initializePlugin();
+    }
+
+    async function initializePlugin() {
+      // Request current user from Figma
+      parent.postMessage({ pluginMessage: { type: 'get-user' } }, '*');
+    }
+
+    // Listen for messages from code.js
+    onmessage = async (event) => {
+      const msg = event.data.pluginMessage;
+      
+      if (msg.type === 'current-user') {
+        currentUser = msg.user;
+        console.log('Current user:', currentUser);
+        
+        // Check if user has a profile
+        const userDoc = await getDoc(doc(db, 'profiles', currentUser.id));
+        
+        if (userDoc.exists()) {
+          showMainApp();
+        } else {
+          showProfileForm();
+        }
+      }
+    };
+
+    // Authentication Event Handlers
+    async function handleProfileCreation(e) {
+      e.preventDefault();
+      if (!currentUser) {
+        console.error('No user logged in');
+        return;
+      }
+
+      const name = currentUser.name;
+      const age = document.getElementById('profile-age').value;
+      const bio = document.getElementById('profile-bio').value;
+      const selectedInterests = Array.from(document.querySelectorAll('.interest-tag.selected'))
+        .map(tag => tag.textContent);
+      const photoUrl = document.getElementById('profile-photo').src === "https://placehold.co/400x600" ? null : currentUser.photoUrl;
+
+      try {
+        await setDoc(doc(db, 'profiles', currentUser.id), {
+          name: currentUser.name, // Use Figma user's name
+          photoUrl, // Use Figma user's photo or null if removed
+          age: parseInt(age),
+          bio,
+          interests: selectedInterests,
+          createdAt: new Date().toISOString()
+        });
+
+        showMainApp();
+      } catch (error) {
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'notify',
+            message: 'Error creating profile: ' + error.message
+          }
+        }, '*');
+      }
+    }
+
+    // Profile Loading and Management
+    async function loadProfiles() {
+      try {
+        const user = currentUser;
+        if (!user) return;
+
+        // Get all profiles except current user's and those already liked or passed
+        const profilesRef = collection(db, 'profiles');
+        const likesRef = collection(db, 'likes');
+        const dislikesRef = collection(db, 'dislikes');
+
+        const [profilesSnapshot, likesSnapshot, dislikesSnapshot] = await Promise.all([
+          getDocs(profilesRef),
+          getDocs(query(likesRef, where('userId', '==', currentUser.id))),
+          getDocs(query(dislikesRef, where('userId', '==', currentUser.id)))
+        ]);
+
+        const likedUserIds = new Set(likesSnapshot.docs.map(doc => doc.data().likedUserId));
+        const dislikedUserIds = new Set(dislikesSnapshot.docs.map(doc => doc.data().dislikedUserId));
+
+        const profiles = [];
+        profilesSnapshot.forEach(doc => {
+          if (doc.id !== currentUser.id && !likedUserIds.has(doc.id) && !dislikedUserIds.has(doc.id)) {
+            profiles.push({
+              id: doc.id,
+              ...doc.data()
+            });
+          }
+        });
+
+        // Initialize the cards with loaded profiles
+        currentProfiles = profiles;
+        currentIndex = 0;
+        showCurrentCard();
+      } catch (error) {
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'notify',
+            message: 'Error loading profiles: ' + error.message
+          }
+        }, '*');
+      }
+    }
+
+    // Initialize interests in profile form
+    function initializeInterests() {
+      const container = document.getElementById('interests-container');
+      container.innerHTML = ''; // Clear existing interests
+      
+      availableInterests.forEach(interest => {
+        const tag = document.createElement('div');
+        tag.className = 'interest-tag';
+        tag.textContent = interest;
+        tag.addEventListener('click', () => {
+          tag.classList.toggle('selected');
+        });
+        container.appendChild(tag);
+      });
+    }
+
+    // Card UI Functions
+    function showCurrentCard() {
+      const cardContainer = document.getElementById('card-container');
+      
+      if (currentIndex >= currentProfiles.length) {
+        cardContainer.innerHTML = `
+          <div style="text-align: center; padding: 40px;">
+            <svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M69.9933 3.59735L62.7328 6.50262L60.9176 10.2552L59.1025 13.9474L62.4303 17.3368L65.8185 20.7263L69.4487 18.85L73.079 17.0342L76.2252 9.28683L79.3109 1.53946L74.7731 6.07893C72.2924 8.56051 70.2353 11.0421 70.2353 11.5263C70.2353 13.8263 67.0891 14.7947 66.0605 12.8579C65.3345 11.5263 66.3025 9.71051 67.6941 9.71051C68.2992 9.71051 70.7798 7.65262 73.2605 5.17104C75.7412 2.68946 77.6168 0.631565 77.4958 0.631565C77.3143 0.692091 73.9261 2.02367 69.9933 3.59735Z" fill="#FF5563"/>
+            <path d="M67.2101 11.4658C67.2101 11.8289 67.5126 12.2526 67.8151 12.4342C68.1782 12.6158 68.4202 12.3737 68.4202 11.8895C68.4202 11.3447 68.1782 10.921 67.8151 10.921C67.5126 10.921 67.2101 11.1632 67.2101 11.4658Z" fill="#FF5563"/>
+            <path d="M54.9277 17.0947C53.4756 18.7289 53.2941 19.2131 53.8992 20.3026C54.5042 21.4526 54.2017 21.9974 50.8134 25.2658L47.0017 28.9579L43.6134 26.5974C36.1714 21.5131 29.4555 19.4553 18.8067 18.971C13.1798 18.7289 9.9126 18.9105 6.16134 19.5763C3.37815 20.121 1.01848 20.6658 0.83697 20.7868C0.715962 20.9079 0.957979 22.421 1.321 24.1158C1.98655 26.8395 2.22857 27.2026 3.31764 26.9C4.34621 26.6579 6.82689 28.8974 15.7815 37.8553L26.9748 49.0526L21.8319 54.1974C17.1126 58.9789 16.8706 59.3421 18.3832 59.3421C19.7143 59.3421 20.0168 59.5842 20.0168 60.8553C20.0168 61.7026 20.1983 62.3684 20.5008 62.3684C20.7429 62.3684 23.1025 60.1895 25.7647 57.5263L30.605 52.6842L41.8588 63.9421C50.1479 72.2342 53.0521 75.5026 52.8706 76.35C52.6286 77.1974 53.1731 77.621 55.4723 78.2868L58.437 79.1947L59.163 77.4395C60.3731 74.7763 61.3412 64.3658 60.8571 59.3421C60.0706 50.021 57.5899 42.5763 53.2336 36.221L50.7529 32.5289L54.5647 28.7158C58.195 25.0842 58.437 24.9026 59.4655 25.871C60.5546 26.8395 60.7361 26.7789 62.8538 24.6605L65.0924 22.421L61.4622 18.7895C59.4655 16.7921 57.5899 15.1579 57.2269 15.1579C56.9244 15.2184 55.8353 16.0658 54.9277 17.0947ZM30.605 27.5053C35.1429 29.0184 41.7983 32.771 41.7983 33.8C41.7983 34.0421 39.0151 37.0079 35.5664 40.4579L29.395 46.6316L19.2302 36.4632C13.6639 30.8947 9.30756 26.0526 9.54958 25.8105C9.79159 25.5079 13.5429 25.4474 17.8992 25.6289C24.2521 25.871 26.6723 26.2342 30.605 27.5053ZM49.9664 43.8474C51.116 46.2079 52.4471 49.6579 52.9311 51.5342C54.0807 56.0737 54.6857 65.0316 54.0807 68.3L53.5966 70.8421L43.3109 60.5526L33.0252 50.2632L39.3781 43.9079C46.6992 36.5842 46.3966 36.5842 49.9664 43.8474Z" fill="#FF5563"/>
+            <path d="M6.88739 62.9737C4.22521 64.0632 4.28571 69.3289 7.0084 69.9947C7.85546 70.1763 8.521 70.7211 8.521 71.1447C8.521 72.2947 10.5781 73.8684 12.2118 73.8684C15.358 73.8684 16.6286 71.5079 16.0235 66.8474C15.842 65.0316 15.479 63.4579 15.237 63.3368C14.2689 62.7316 8.09748 62.4289 6.88739 62.9737Z" fill="#FF5563"/>
+            </svg>
+            <h2 style="margin-bottom: 16px; margin-top: 16px;">No more profiles!</h2>
+            <p>Come back later for more matches.</p>
+          </div>
+        `;
+        return;
+      }
+      
+      const profile = currentProfiles[currentIndex];
+      var profilePhotoUrl = profile.photoUrl
+      if(profilePhotoUrl == undefined){
+        profilePhotoUrl = "https://placehold.co/400x600"
+      }
+      
+      cardContainer.innerHTML = `
+        <div class="card" id="current-card">
+          <img class="card-image" src="${profilePhotoUrl}" alt="${profile.name}">
+          <div class="action-label like-label">LIKE</div>
+          <div class="action-label nope-label">NOPE</div>
+          <div class="card-info">
+            <div class="card-name">${profile.name}, ${profile.age}</div>
+            <div class="card-bio">${profile.bio}</div>
+            <div class="card-interests">
+              ${profile.interests.map(interest => 
+                `<span class="interest-tag">${interest}</span>`
+              ).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+      
+      setupCardDragging();
+    }
+    
+    function setupCardDragging() {
+      const card = document.getElementById('current-card');
+      if (!card) return;
+
+      const likeLabel = card.querySelector('.like-label');
+      const nopeLabel = card.querySelector('.nope-label');
+      
+      function handleDragStart(e) {
+        isDragging = true;
+        startX = e.type === 'mousedown' ? e.clientX : e.touches[0].clientX;
+        card.style.transition = 'none';
+      }
+      
+      function handleDragMove(e) {
+        if (!isDragging) return;
+        
+        const currentClientX = e.type === 'mousemove' ? e.clientX : e.touches[0].clientX;
+        currentX = currentClientX - startX;
+        const rotation = currentX * 0.1;
+        
+        card.style.transform = `translateX(${currentX}px) rotate(${rotation}deg)`;
+        
+        if (currentX > 50) {
+          likeLabel.style.display = 'block';
+          nopeLabel.style.display = 'none';
+        } else if (currentX < -50) {
+          likeLabel.style.display = 'none';
+          nopeLabel.style.display = 'block';
+        } else {
+          likeLabel.style.display = 'none';
+          nopeLabel.style.display = 'none';
+        }
+      }
+      
+      function handleDragEnd() {
+        if (!isDragging) return;
+        isDragging = false;
+        
+        card.style.transition = 'transform 0.5s';
+        
+        if (Math.abs(currentX) > 100) {
+          const direction = currentX > 0 ? 'right' : 'left';
+          const rotation = direction === 'right' ? 90 : -90;
+          
+          card.style.transform = `translateX(${direction === 'right' ? 1000 : -1000}px) rotate(${rotation}deg)`;
+          
+          if (direction === 'right') {
+            handleLike();
+          } else {
+            handleDislike();
+          }
+        } else {
+          card.style.transform = 'translateX(0) rotate(0)';
+          likeLabel.style.display = 'none';
+          nopeLabel.style.display = 'none';
+        }
+      }
+      
+      // Mouse events
+      card.addEventListener('mousedown', handleDragStart);
+      document.addEventListener('mousemove', handleDragMove);
+      document.addEventListener('mouseup', handleDragEnd);
+      
+      // Touch events
+      card.addEventListener('touchstart', handleDragStart);
+      document.addEventListener('touchmove', handleDragMove);
+      document.addEventListener('touchend', handleDragEnd);
+    }
+
+    // Like/Dislike Handlers
+    window.handleLike = async function handleLike() {
+      if (currentIndex >= currentProfiles.length) return;
+  
+      const likedProfile = currentProfiles[currentIndex];
+      
+      try {
+        // Add like to Firebase
+        await addDoc(collection(db, 'likes'), {
+          userId: currentUser.id,
+          likedUserId: likedProfile.id,
+          timestamp: new Date().toISOString()
+        });
+
+        console.log('Like added for:', likedProfile.id); // Debug log
+
+        // Check for mutual like
+        const likesRef = collection(db, 'likes');
+        const q = query(
+          likesRef, 
+          where('userId', '==', likedProfile.id),
+          where('likedUserId', '==', currentUser.id)
+        );
+        const mutualLike = await getDocs(q);
+
+        console.log('Mutual like check:', !mutualLike.empty); // Debug log
+
+        if (!mutualLike.empty) {
+          console.log('Match found! Creating match record...'); // Debug log
+          await createMatch(currentUser.id, likedProfile.id);
+          showMatchPopup(likedProfile);
+          loadMatches(); // Reload matches after new match
+        }
+
+        currentIndex++;
+        showCurrentCard();
+      } catch (error) {
+        console.error('Like error:', error); // Debug log
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'notify',
+            message: 'Error processing like: ' + error.message
+          }
+        }, '*');
+      }
+    }
+
+    window.handleDislike = async function handleDislike() {
+      if (currentIndex >= currentProfiles.length) return;
+      
+      const dislikedProfile = currentProfiles[currentIndex];
+      
+      try {
+        await addDoc(collection(db, 'dislikes'), {
+          userId: currentUser.id,
+          dislikedUserId: dislikedProfile.id,
+          timestamp: new Date().toISOString()
+        });
+
+        currentIndex++;
+        showCurrentCard();
+      } catch (error) {
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'notify',
+            message: 'Error processing dislike: ' + error.message
+          }
+        }, '*');
+      }
+    }
+
+    async function createMatch(user1Id, user2Id) {
+      try {
+        // Check if match already exists
+        const matchesRef = collection(db, 'matches');
+        // Single query for user1's matches
+        const q = query(matchesRef, where('users', 'array-contains', user1Id));
+        const userMatchesSnapshot = await getDocs(q);
+
+        // Check if user2 is in any existing match
+        const isAlreadyMatched = userMatchesSnapshot.docs.some(doc => {
+          const matchData = doc.data();
+          return matchData.users.includes(user2Id);
+        });
+
+        if (isAlreadyMatched) {
+          console.log('Match already exists');
+          return;
+        }
+
+        const matchData = {
+          users: [user1Id, user2Id],
+          timestamp: new Date().toISOString()
+        };
+
+        console.log('Creating match with data:', matchData); // Debug log
+
+        const docRef = await addDoc(collection(db, 'matches'), matchData);
+        console.log('Match created with ID:', docRef.id); // Debug log
+
+        // Reload matches immediately after creating a new match
+        loadMatches();
+      } catch (error) {
+        console.error('Error creating match:', error);
+      }
+    }
+
+    function showMatchPopup(matchedProfile) {
+      const popup = document.createElement('div');
+      popup.className = 'match-popup';
+      popup.innerHTML = `
+        <div class="match-content">
+          <h2>It's a Match! 🎉</h2>
+          <p>You and ${matchedProfile.name} liked each other!</p>
+          <button onclick="this.parentElement.parentElement.remove()">Continue Swiping</button>
+        </div>
+      `;
+      document.body.appendChild(popup);
+    }
+
+    async function loadMatches() {
+      try {
+        if (!currentUser) {
+          console.log('No user logged in'); // Debug log
+          return;
+        }
+
+        console.log('Loading matches for user:', currentUser.id); // Debug log
+
+        // Get all matches where current user is involved
+        const matchesRef = collection(db, 'matches');
+        const q = query(
+          matchesRef,
+          where('users', 'array-contains', currentUser.id)
+        );
+        
+        const matchesSnapshot = await getDocs(q);
+        console.log('Found matches:', matchesSnapshot.size); // Debug log
+
+        const matchesList = document.getElementById('match-list');
+        let matchCount = 0;
+        
+        matchesList.innerHTML = ''; // Clear existing matches
+        
+        const matchPromises = matchesSnapshot.docs.map(async (matchDoc) => {
+          const matchData = matchDoc.data();
+          const otherUserId = matchData.users.find(id => id !== currentUser.id);
+          
+          console.log('Getting profile for:', otherUserId); // Debug log
+          
+          // Get the matched user's profile
+          const userDoc = await getDoc(doc(db, 'profiles', otherUserId));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            matchCount++;
+            
+            const matchTime = new Date(matchData.timestamp);
+            
+            return `
+              <div class="match-item" onclick="openChat('${matchDoc.id}')">
+                <img class="match-avatar" src="${userData.photoUrl}" alt="${userData.name}">
+                <div class="match-info">
+                  <div class="match-name">${userData.name}</div>
+                  <div class="match-time">Matched ${getTimeAgo(matchTime)}</div>
+                </div>
+              </div>
+            `;
+          }
+          return '';
+        });
+
+        const matchElements = await Promise.all(matchPromises);
+        matchesList.innerHTML = matchElements.join('');
+        
+        // Update match count badge
+        const countElement = document.getElementById('matches-count');
+        if (countElement) {
+          countElement.textContent = matchCount;
+          console.log('Updated match count:', matchCount); // Debug log
+        }
+        
+      } catch (error) {
+        console.error('Error loading matches:', error);
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'notify',
+            message: 'Error loading matches: ' + error.message
+          }
+        }, '*');
+      }
+    }
+
+    function toggleMatches() {
+      const container = document.getElementById('matches-container');
+      container.classList.toggle('open');
+      
+      // Reload matches when opening the panel
+      if (container.classList.contains('open')) {
+        loadMatches();
+      }
+    }
+
+    function getTimeAgo(date) {
+      const seconds = Math.floor((new Date() - date) / 1000);
+      
+      let interval = seconds / 31536000;
+      if (interval > 1) return Math.floor(interval) + ' years ago';
+      
+      interval = seconds / 2592000;
+      if (interval > 1) return Math.floor(interval) + ' months ago';
+      
+      interval = seconds / 86400;
+      if (interval > 1) return Math.floor(interval) + ' days ago';
+      
+      interval = seconds / 3600;
+      if (interval > 1) return Math.floor(interval) + ' hours ago';
+      
+      interval = seconds / 60;
+      if (interval > 1) return Math.floor(interval) + ' minutes ago';
+      
+      return Math.floor(seconds) + ' seconds ago';
+    }
+
+    window.showMatchProfile = async function showMatchProfile(userId) {
+      try {
+        const userDoc = await getDoc(doc(db, 'profiles', userId));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          
+          // Create a profile modal
+          const modal = document.createElement('div');
+          modal.className = 'match-profile-modal';
+          modal.innerHTML = `
+            <div class="modal-content">
+              <button class="close-modal" onclick="this.parentElement.parentElement.remove()">&times;</button>
+              <img src="${userData.photoUrl}" alt="${userData.name}" class="profile-image">
+              <h2>${userData.name}, ${userData.age}</h2>
+              <p class="bio">${userData.bio}</p>
+              <div class="interests">
+                ${userData  .interests.map(interest => 
+                  `<span class="interest-tag">${interest}</span>`
+                ).join('')}
+              </div>
+            </div>
+          `;
+          
+          document.body.appendChild(modal);
+        }
+      } catch (error) {
+        console.error('Error showing profile:', error);
+      }
+    }
+
+    window.toggleChat = function toggleChat() {
+      const container = document.getElementById('chat-container');
+      container.classList.toggle('open');
+    };
+
+    function formatTime(timestamp) {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    window.openChat = async function openChat(matchId) {
+      currentChatMatchId = matchId;
+
+      // Get the matched user's name
+      const matchDoc = await getDoc(doc(db, 'matches', matchId));
+      const matchData = matchDoc.data();
+      const otherUserId = matchData.users.find(id => id !== currentUser.id);
+      const userDoc = await getDoc(doc(db, 'profiles', otherUserId));
+      const userData = userDoc.data();
+      currentChatName = userData.name;
+
+      // Update chat header and show chat
+      document.querySelector('.chat-header h2').innerHTML = `
+        <span onclick="showMatchProfile('${otherUserId}')">${currentChatName}</span>
+      `;
+      document.getElementById('chat-container').classList.add('open');
+      document.getElementById('matches-container').classList.remove('open');
+      
+      if (unsubscribeChat) unsubscribeChat();
+      const messagesRef = collection(db, 'chats');
+      const messagesQuery = query(
+        messagesRef,
+        where('matchId', '==', matchId),
+        orderBy('timestamp', 'asc')
+      );
+
+      unsubscribeChat = onSnapshot(messagesQuery, snapshot => {
+        const chatMessages = document.getElementById('chat-messages');
+        chatMessages.innerHTML = '';
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          const messageElement = document.createElement('div');
+          messageElement.classList.add('chat-message');
+          if (data.senderId === currentUser.id) {
+            messageElement.classList.add('chat-outgoing');
+          } else {
+            messageElement.classList.add('chat-incoming');
+          }
+          messageElement.innerHTML = `
+            <div class="message-body">${data.text}</div>
+            <div class="message-time">${formatTime(data.timestamp)}</div>
+          `;
+          chatMessages.appendChild(messageElement);
+        });
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      });
+    };
+
+    window.closeChat = function closeChat() {
+      document.getElementById('chat-container').classList.remove('open');
+      document.getElementById('matches-container').classList.add('open');
+      if (unsubscribeChat) {
+        unsubscribeChat();
+      }
+    };
+
+    window.sendMessage = function sendMessage() {
+      const input = document.getElementById('chat-input');
+      const message = input.value.trim();
+      if (message && currentChatMatchId && currentUser) {
+        addDoc(collection(db, 'chats'), {
+          matchId: currentChatMatchId,
+          text: message,
+          senderId: currentUser.id,
+          timestamp: new Date().toISOString()
+        });
+        input.value = '';
+      }
+    }
+
+    // Initialize event listeners when DOM is loaded
+    document.addEventListener('DOMContentLoaded', () => {
+      // Initialize interests for profile creation
+      initializeInterests();
+
+      document.addEventListener('click', (e) => {
+        const matchesBtn = e.target.closest('[data-action="toggle-matches"]');
+        if (matchesBtn) {
+          console.log('Matches button clicked'); // Debug log
+          toggleMatches();
+        }
+
+        const closeMatchesBtn = e.target.closest('.close-matches');
+        if (closeMatchesBtn) {
+          console.log('Close matches button clicked'); // Debug log
+          toggleMatches();
+        }
+      });
+
+      // Add match button and container to main app if they don't exist
+      const appContainer = document.getElementById('app-container');
+
+      // Form submission for profile creation
+      document.getElementById('profile-form').addEventListener('submit', handleProfileCreation);
+
+      // Show disclaimer on startup
+      showDisclaimer();
+
+      // Add event listener for Enter key in chat input
+      const chatInput = document.getElementById('chat-input');
+      chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+    });
+
+    window.removeProfilePhoto = function removeProfilePhoto() {
+      document.getElementById('profile-photo').src = "https://placehold.co/400x600";
+    }
+
+  </script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f7fa;
+      padding: 20px;
+    }
+
+    /* Auth Container Styles */
+    .auth-container {
+      max-width: 340px;
+      margin: 0 auto;
+      padding: 20px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .auth-title {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 20px;
+      text-align: center;
+      color: #ff4458;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: #ff4458;
+    }
+
+    .auth-button {
+      width: 100%;
+      padding: 12px;
+      background: #ff4458;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .auth-button:hover {
+      background: #e5293d;
+    }
+
+    .auth-switch {
+      margin-top: 16px;
+      text-align: center;
+    }
+
+    .auth-switch a {
+      color: #ff4458;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .error-message {
+      color: #e74c3c;
+      font-size: 14px;
+      margin-top: 4px;
+      display: none;
+    }
+
+    /* Profile Form Styles */
+    .profile-form {
+      max-width: 340px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .interests-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .interest-tag {
+      background: #f0f2f5;
+      padding: 8px 16px;
+      border-radius: 100px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .interest-tag.selected {
+      background: #ff4458;
+      color: white;
+    }
+
+    /* Card Styles */
+    #card-container {
+      position: relative;
+      width: 340px;
+      height: 480px;
+      margin: 0 auto;
+      perspective: 1000px;
+    }
+
+    .card {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      transform-style: preserve-3d;
+      transition: transform 0.5s;
+      cursor: grab;
+      border-radius: 12px;
+      background: white;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+
+    .card-image {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 12px;
+    }
+
+    .card-info {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 20px;
+      background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+      color: white;
+      border-radius: 0 0 12px 12px;
+    }
+
+    .card-name {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+
+    .card-bio {
+      font-size: 14px;
+      line-height: 1.4;
+      margin-bottom: 12px;
+      opacity: 0.9;
+    }
+
+    .card-interests {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .card-interests .interest-tag {
+      background: rgba(255,255,255,0.2);
+      color: white;
+      font-size: 12px;
+      padding: 4px 12px;
+    }
+
+    .action-label {
+      position: absolute;
+      top: 40px;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-weight: bold;
+      font-size: 24px;
+      transform: rotate(-20deg);
+      display: none;
+      z-index: 10;
+    }
+
+    .like-label {
+      right: 40px;
+      border: 3px solid #2ecc71;
+      color: #2ecc71;
+    }
+
+    .nope-label {
+      left: 40px;
+      border: 3px solid #e74c3c;
+      color: #e74c3c;
+    }
+
+    /* Action Buttons */
+    .buttons {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      margin-top: 24px;
+    }
+
+    .button {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      transition: transform 0.2s, background-color 0.2s;
+    }
+
+    .button.like {
+      background: white;
+      color: #2ecc71;
+      box-shadow: 0 2px 6px rgba(46, 204, 113, 0.3);
+    }
+
+    .button.like:hover {
+      background: #2ecc71;
+      color: white;
+      transform: scale(1.1);
+    }
+
+    .button.dislike {
+      background: white;
+      color: #e74c3c;
+      box-shadow: 0 2px 6px rgba(231, 76, 60, 0.3);
+    }
+
+    .button.dislike:hover {
+      background: #e74c3c;
+      color: white;
+      transform: scale(1.1);
+    }
+
+    .button.matches {
+      background: #ff4458;
+      color: white;
+      box-shadow: 0 2px 6px rgba(255, 68, 88, 0.3);
+    }
+
+    .button.matches:hover {
+      background: #e5293d;
+      color: white;
+      transform: scale(1.1);
+    }
+
+    .matches-badge {
+      background: #fff;
+      color: #ff4458;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: bold;
+      margin-left: 6px;
+    }
+
+    /* Match Popup */
+    .match-popup {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .match-content {
+      background: white;
+      padding: 32px;
+      border-radius: 16px;
+      text-align: center;
+    }
+
+    .match-content h2 {
+      color: #ff4458;
+      margin-bottom: 16px;
+    }
+
+    .match-content button {
+      margin-top: 20px;
+      padding: 12px 24px;
+      background: #ff4458;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .match-content button:hover {
+      background: #e5293d;
+    }
+
+    .matches-container {
+      position: fixed;
+      top: 0;
+      right: -300px;
+      width: 300px;
+      height: 100%;
+      background: white;
+      box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+      transition: right 0.3s ease;
+      z-index: 1000;
+      overflow-y: auto;
+      visibility: visible; /* Add this */
+    }
+
+    .matches-container.open {
+      right: 0;
+    }
+
+    .matches-header {
+      padding: 20px;
+      background: #ff4458;
+      color: white;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .matches-header h2 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .close-matches {
+      background: none;
+      border: none;
+      color: white;
+      font-size: 24px;
+      cursor: pointer;
+    }
+
+    .match-list {
+      padding: 16px;
+    }
+
+    .match-item {
+      display: flex;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .match-item:hover {
+      background-color: #f8f8f8;
+    }
+
+    .match-avatar {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      margin-right: 12px;
+      object-fit: cover;
+    }
+
+    .match-info {
+      flex: 1;
+    }
+
+    .match-name {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .match-time {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .chat-button {
+      background: none;
+      border: none;
+      color: #ff4458;
+      font-size: 24px;
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 50%;
+      transition: background-color 0.2s;
+    }
+
+    .chat-button:hover {
+      background-color: rgba(255, 68, 88, 0.1);
+    }
+
+    /*
+    .show-matches-btn {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #ff4458;
+      color: white;
+      border: none;
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      cursor: pointer;
+      z-index: 999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      transition: transform 0.2s, background-color 0.2s;
+    }
+
+    .show-matches-btn:hover {
+      background: #e5293d;
+      transform: scale(1.1);
+    }
+    */
+
+    .match-profile-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+
+    .modal-content {
+      background: white;
+      padding: 24px;
+      border-radius: 12px;
+      max-width: 400px;
+      width: 90%;
+      position: relative;
+    }
+
+    .close-modal {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #666;
+    }
+
+    .profile-image {
+      width: 100%;
+      height: 300px;
+      object-fit: cover;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .bio {
+      margin: 16px 0;
+      line-height: 1.4;
+    }
+
+    .profile-photo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .form-input:disabled {
+      background-color: #f5f5f5;
+      cursor: not-allowed;
+    }
+
+    /* Disclaimer Styles */
+    .disclaimer-container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+
+    .disclaimer-title {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 20px;
+      color: #ff4458;
+    }
+
+    .disclaimer-text {
+      font-size: 16px;
+      margin-bottom: 20px;
+    }
+
+    .disclaimer-button {
+      padding: 12px 24px;
+      background: #ff4458;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .disclaimer-button:hover {
+      background: #e5293d;
+    }
+
+    /* Chat System Styles */
+    .chat-container {
+      position: fixed;
+      top: 0;
+      right: -300px;
+      width: 300px;
+      height: 100%;
+      background: white;
+      z-index: 1000;
+      transition: right 0.3s ease;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chat-container.open {
+      right: 0;
+    }
+
+    .chat-header {
+      padding: 20px;
+      background: #ff4458;
+      color: white;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .chat-header h2 {
+      margin: 0;
+      text-decoration: underline;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .chat-header h2:hover {
+      opacity: 0.8;
+    }
+
+    .chat-messages {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chat-message {
+      max-width: 80%;
+      margin: 6px 10px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.2;
+      position: relative;
+    }
+
+    .chat-outgoing {
+      align-self: flex-end;
+      background-color: #ff4458;
+      color: #fff;
+    }
+
+    .chat-incoming {
+      align-self: flex-start;
+      background-color: #f0f2f5;
+      color: #333;
+    }
+
+    .message-body {
+      margin-bottom: 4px;
+    }
+
+    .message-time {
+      font-size: 10px;
+      opacity: 0.6;
+      text-align: right;
+    }
+
+    .chat-input-container {
+      padding: 16px;
+      border-top: 1px solid #eee;
+      display: flex;
+      gap: 8px;
+    }
+
+    .chat-input {
+      flex: 1;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+    }
+
+    .send-button {
+      padding: 8px 16px;
+      background: #ff4458;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .send-button:hover {
+      background: #e5293d;
+    }
+
+    /* Update the back button styles */
+    .back-button {
+      background: none;
+      border: none;
+      color: white;
+      font-size: 24px;
+      cursor: pointer;
+      padding: 4px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .back-button svg {
+      width: 24px;
+      height: 24px;
+    }
+
+  </style>
+</head>
+<body>
+  <!-- Disclaimer Container -->
+  <div id="disclaimer-container" class="disclaimer-container">
+    <svg width="288" height="92" viewBox="0 0 288 92" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="288" height="92" fill="white"/>
+      <path d="M75.9933 6.59735L68.7328 9.50262L66.9176 13.2552L65.1025 16.9474L68.4303 20.3368L71.8185 23.7263L75.4487 21.85L79.079 20.0342L82.2252 12.2868L85.3109 4.53946L80.7731 9.07893C78.2924 11.5605 76.2353 14.0421 76.2353 14.5263C76.2353 16.8263 73.0891 17.7947 72.0605 15.8579C71.3345 14.5263 72.3025 12.7105 73.6941 12.7105C74.2992 12.7105 76.7798 10.6526 79.2605 8.17104C81.7412 5.68946 83.6168 3.63157 83.4958 3.63157C83.3143 3.69209 79.9261 5.02367 75.9933 6.59735Z" fill="#FF5563"/>
+      <path d="M73.2101 14.4658C73.2101 14.8289 73.5126 15.2526 73.8151 15.4342C74.1782 15.6158 74.4202 15.3737 74.4202 14.8895C74.4202 14.3447 74.1782 13.921 73.8151 13.921C73.5126 13.921 73.2101 14.1632 73.2101 14.4658Z" fill="#FF5563"/>
+      <path d="M60.9277 20.0947C59.4756 21.7289 59.2941 22.2131 59.8992 23.3026C60.5042 24.4526 60.2017 24.9974 56.8134 28.2658L53.0017 31.9579L49.6134 29.5974C42.1714 24.5131 35.4555 22.4553 24.8067 21.971C19.1798 21.7289 15.9126 21.9105 12.1613 22.5763C9.37815 23.121 7.01848 23.6658 6.83697 23.7868C6.71596 23.9079 6.95798 25.421 7.321 27.1158C7.98655 29.8395 8.22857 30.2026 9.31764 29.9C10.3462 29.6579 12.8269 31.8974 21.7815 40.8553L32.9748 52.0526L27.8319 57.1974C23.1126 61.9789 22.8706 62.3421 24.3832 62.3421C25.7143 62.3421 26.0168 62.5842 26.0168 63.8553C26.0168 64.7026 26.1983 65.3684 26.5008 65.3684C26.7429 65.3684 29.1025 63.1895 31.7647 60.5263L36.605 55.6842L47.8588 66.9421C56.1479 75.2342 59.0521 78.5026 58.8706 79.35C58.6286 80.1974 59.1731 80.621 61.4723 81.2868L64.437 82.1947L65.163 80.4395C66.3731 77.7763 67.3412 67.3658 66.8571 62.3421C66.0706 53.021 63.5899 45.5763 59.2336 39.221L56.7529 35.5289L60.5647 31.7158C64.195 28.0842 64.437 27.9026 65.4655 28.871C66.5546 29.8395 66.7361 29.7789 68.8538 27.6605L71.0924 25.421L67.4622 21.7895C65.4655 19.7921 63.5899 18.1579 63.2269 18.1579C62.9244 18.2184 61.8353 19.0658 60.9277 20.0947ZM36.605 30.5053C41.1429 32.0184 47.7983 35.771 47.7983 36.8C47.7983 37.0421 45.0151 40.0079 41.5664 43.4579L35.395 49.6316L25.2302 39.4632C19.6639 33.8947 15.3076 29.0526 15.5496 28.8105C15.7916 28.5079 19.5429 28.4474 23.8992 28.6289C30.2521 28.871 32.6723 29.2342 36.605 30.5053ZM55.9664 46.8474C57.116 49.2079 58.4471 52.6579 58.9311 54.5342C60.0807 59.0737 60.6857 68.0316 60.0807 71.3L59.5966 73.8421L49.3109 63.5526L39.0252 53.2632L45.3781 46.9079C52.6992 39.5842 52.3966 39.5842 55.9664 46.8474Z" fill="#FF5563"/>
+      <path d="M12.8874 65.9737C10.2252 67.0632 10.2857 72.3289 13.0084 72.9947C13.8555 73.1763 14.521 73.7211 14.521 74.1447C14.521 75.2947 16.5781 76.8684 18.2118 76.8684C21.358 76.8684 22.6286 74.5079 22.0235 69.8474C21.842 68.0316 21.479 66.4579 21.237 66.3368C20.2689 65.7316 14.0975 65.4289 12.8874 65.9737Z" fill="#FF5563"/>
+      <path d="M258.977 47.5437V61.8294H252.123V28.8822H258.784V41.4787H259.073C259.631 40.0201 260.532 38.8779 261.776 38.0521C263.02 37.2155 264.58 36.7973 266.457 36.7973C268.173 36.7973 269.669 37.1726 270.946 37.9234C272.233 38.6634 273.23 39.7305 273.938 41.1248C274.657 42.5083 275.01 44.1653 275 46.0958V61.8294H268.147V47.3185C268.157 45.7955 267.771 44.6104 266.988 43.7631C266.216 42.9159 265.133 42.4922 263.739 42.4922C262.805 42.4922 261.98 42.6906 261.261 43.0875C260.553 43.4843 259.996 44.0634 259.588 44.8249C259.191 45.5757 258.987 46.4819 258.977 47.5437Z" fill="#FF5563"/>
+      <path d="M238.965 62.312C236.434 62.312 234.256 61.7758 232.433 60.7033C230.621 59.6201 229.226 58.1186 228.25 56.1988C227.285 54.279 226.802 52.0697 226.802 49.5707C226.802 47.0396 227.29 44.8196 228.266 42.9105C229.253 40.9908 230.653 39.4946 232.465 38.4221C234.278 37.3389 236.434 36.7973 238.932 36.7973C241.088 36.7973 242.976 37.1887 244.595 37.9717C246.215 38.7546 247.496 39.8539 248.44 41.2696C249.384 42.6853 249.904 44.3477 250.001 46.2567H243.533C243.351 45.0234 242.869 44.0313 242.086 43.2805C241.313 42.5191 240.3 42.1383 239.045 42.1383C237.983 42.1383 237.056 42.4279 236.262 43.0071C235.479 43.5755 234.868 44.4067 234.428 45.5006C233.988 46.5946 233.768 47.9191 233.768 49.4742C233.768 51.0508 233.983 52.3914 234.412 53.4961C234.852 54.6008 235.468 55.4427 236.262 56.0218C237.056 56.601 237.983 56.8905 239.045 56.8905C239.828 56.8905 240.53 56.7297 241.153 56.4079C241.785 56.0862 242.305 55.6196 242.713 55.0083C243.131 54.3863 243.405 53.6409 243.533 52.7722H250.001C249.893 54.6598 249.379 56.3221 248.456 57.7593C247.545 59.1857 246.284 60.3011 244.676 61.1055C243.067 61.9098 241.163 62.312 238.965 62.312Z" fill="#FF5563"/>
+      <path d="M225.866 37.119V42.267H210.985V37.119H225.866ZM214.364 31.1988H221.217V54.2361C221.217 54.8689 221.313 55.3622 221.506 55.7162C221.7 56.0594 221.968 56.3007 222.311 56.4401C222.665 56.5795 223.072 56.6492 223.533 56.6492C223.855 56.6492 224.177 56.6224 224.499 56.5688C224.82 56.5044 225.067 56.4562 225.239 56.424L226.317 61.5237C225.973 61.631 225.491 61.7543 224.869 61.8938C224.247 62.0439 223.491 62.1351 222.6 62.1672C220.949 62.2316 219.501 62.0117 218.257 61.5077C217.023 61.0036 216.064 60.2207 215.377 59.1589C214.691 58.0971 214.353 56.7565 214.364 55.137V31.1988Z" fill="#FF5563"/>
+      <path d="M195.755 62.2959C194.179 62.2959 192.774 62.0225 191.54 61.4755C190.307 60.9178 189.331 60.0973 188.612 59.0141C187.905 57.9201 187.551 56.5581 187.551 54.9279C187.551 53.5551 187.803 52.4021 188.307 51.4691C188.811 50.536 189.497 49.7852 190.366 49.2168C191.235 48.6484 192.221 48.2194 193.326 47.9298C194.441 47.6402 195.61 47.4365 196.833 47.3185C198.27 47.1683 199.429 47.0289 200.308 46.9002C201.187 46.7608 201.826 46.557 202.222 46.2889C202.619 46.0208 202.818 45.624 202.818 45.0984V45.0019C202.818 43.983 202.496 43.1947 201.852 42.637C201.22 42.0793 200.319 41.8005 199.15 41.8005C197.916 41.8005 196.935 42.074 196.206 42.621C195.476 43.1572 194.994 43.8329 194.758 44.648L188.419 44.1332C188.741 42.6317 189.374 41.334 190.318 40.24C191.261 39.1353 192.479 38.2881 193.97 37.6982C195.471 37.0976 197.208 36.7973 199.182 36.7973C200.555 36.7973 201.868 36.9582 203.123 37.2799C204.389 37.6017 205.51 38.1004 206.486 38.776C207.472 39.4517 208.25 40.3204 208.818 41.3822C209.387 42.4333 209.671 43.6935 209.671 45.1628V61.8294H203.172V58.4028H202.979C202.582 59.175 202.051 59.856 201.386 60.4459C200.721 61.025 199.922 61.4808 198.989 61.8133C198.056 62.1351 196.978 62.2959 195.755 62.2959ZM197.718 57.5662C198.726 57.5662 199.616 57.3678 200.388 56.971C201.161 56.5634 201.767 56.0165 202.206 55.3301C202.646 54.6437 202.866 53.8661 202.866 52.9974V50.3751C202.651 50.5145 202.356 50.6432 201.981 50.7612C201.616 50.8685 201.204 50.9704 200.742 51.0669C200.281 51.1527 199.82 51.2331 199.359 51.3082C198.898 51.3725 198.479 51.4315 198.104 51.4852C197.3 51.6031 196.597 51.7908 195.997 52.0482C195.396 52.3056 194.929 52.6542 194.597 53.0939C194.264 53.5229 194.098 54.0592 194.098 54.7027C194.098 55.6357 194.436 56.3489 195.112 56.8423C195.798 57.3249 196.667 57.5662 197.718 57.5662Z" fill="#FF5563"/>
+      <path d="M149.653 61.8294V37.119H156.185V41.4787H156.474C156.989 40.0309 157.847 38.8887 159.048 38.0521C160.25 37.2156 161.687 36.7973 163.36 36.7973C165.054 36.7973 166.497 37.2209 167.687 38.0682C168.878 38.9047 169.672 40.0416 170.068 41.4787H170.326C170.83 40.063 171.741 38.9316 173.061 38.0843C174.391 37.2263 175.962 36.7973 177.774 36.7973C180.08 36.7973 181.952 37.5319 183.389 39.0013C184.837 40.4599 185.561 42.5298 185.561 45.211V61.8294H178.723V46.5624C178.723 45.1896 178.359 44.16 177.629 43.4736C176.9 42.7872 175.989 42.444 174.895 42.444C173.651 42.444 172.68 42.8408 171.983 43.6345C171.286 44.4174 170.937 45.4523 170.937 46.7393V61.8294H164.293V46.4176C164.293 45.2057 163.944 44.2404 163.247 43.5219C162.561 42.8033 161.655 42.444 160.528 42.444C159.767 42.444 159.081 42.637 158.469 43.0231C157.869 43.3985 157.391 43.9294 157.038 44.6158C156.684 45.2915 156.507 46.0851 156.507 46.9967V61.8294H149.653Z" fill="#FF5563"/>
+      <path d="M134.383 71.6106C132.163 71.6106 130.259 71.3049 128.672 70.6936C127.096 70.093 125.841 69.2725 124.908 68.2322C123.975 67.1919 123.369 66.0229 123.09 64.7252L129.428 63.8725C129.621 64.3659 129.927 64.827 130.345 65.256C130.763 65.685 131.316 66.0282 132.002 66.2856C132.699 66.5538 133.547 66.6878 134.544 66.6878C136.035 66.6878 137.263 66.3232 138.228 65.5939C139.204 64.8753 139.692 63.6687 139.692 61.9742V57.4536H139.402C139.102 58.14 138.652 58.7889 138.051 59.4002C137.45 60.0115 136.678 60.5102 135.734 60.8963C134.791 61.2824 133.665 61.4755 132.356 61.4755C130.501 61.4755 128.812 61.0465 127.289 60.1885C125.776 59.3198 124.57 57.9952 123.669 56.2149C122.779 54.4238 122.334 52.1608 122.334 49.426C122.334 46.6267 122.789 44.2887 123.701 42.4118C124.613 40.5349 125.825 39.13 127.337 38.1969C128.86 37.2638 130.528 36.7973 132.34 36.7973C133.724 36.7973 134.882 37.0332 135.815 37.5051C136.748 37.9663 137.499 38.5455 138.067 39.2426C138.646 39.929 139.091 40.6047 139.402 41.2696H139.66V37.119H146.465V62.0707C146.465 64.1728 145.95 65.9317 144.92 67.3474C143.891 68.7631 142.464 69.8249 140.641 70.5327C138.829 71.2513 136.743 71.6106 134.383 71.6106ZM134.528 56.3275C135.633 56.3275 136.566 56.054 137.327 55.507C138.099 54.9493 138.689 54.1557 139.097 53.1261C139.515 52.0858 139.724 50.8417 139.724 49.3938C139.724 47.9459 139.52 46.6911 139.113 45.6293C138.705 44.5568 138.115 43.7256 137.343 43.1358C136.571 42.5459 135.633 42.2509 134.528 42.2509C133.402 42.2509 132.453 42.5566 131.68 43.1679C130.908 43.7685 130.324 44.6051 129.927 45.6776C129.53 46.7501 129.332 47.9888 129.332 49.3938C129.332 50.8202 129.53 52.0536 129.927 53.0939C130.334 54.1235 130.919 54.9225 131.68 55.4909C132.453 56.0486 133.402 56.3275 134.528 56.3275Z" fill="#FF5563"/>
+      <path d="M113.173 61.8294V37.119H120.026V61.8294H113.173ZM116.615 33.9337C115.596 33.9337 114.722 33.5959 113.993 32.9202C113.274 32.2338 112.915 31.4133 112.915 30.4588C112.915 29.515 113.274 28.7053 113.993 28.0296C114.722 27.3432 115.596 27 116.615 27C117.634 27 118.503 27.3432 119.221 28.0296C119.951 28.7053 120.315 29.515 120.315 30.4588C120.315 31.4133 119.951 32.2338 119.221 32.9202C118.503 33.5959 117.634 33.9337 116.615 33.9337Z" fill="#FF5563"/>
+      <path d="M111.251 37.119V42.267H96V37.119H111.251ZM99.491 61.8294V35.3333C99.491 33.5422 99.8395 32.0568 100.537 30.8771C101.245 29.6973 102.21 28.8125 103.432 28.2226C104.655 27.6328 106.044 27.3378 107.599 27.3378C108.65 27.3378 109.61 27.4183 110.479 27.5791C111.358 27.74 112.012 27.8848 112.441 28.0135L111.219 33.1615C110.951 33.0757 110.618 32.9953 110.221 32.9202C109.835 32.8451 109.438 32.8076 109.031 32.8076C108.023 32.8076 107.32 33.0435 106.923 33.5154C106.527 33.9766 106.328 34.6255 106.328 35.462V61.8294H99.491Z" fill="#FF5563"/>
+      </svg>
+    <h1 class="disclaimer-title">Disclaimer</h1>
+    <p class="disclaimer-text">
+      This application has been created for fun, it is not intended to be real working application.
+      <br /><br />
+      It uses Figma user data (name and profile photo) to simulate a dating app experience. You can remove your data when creating profile.
+      <br /><br />
+      <b>Please do not enter any other personal information.</b>
+      <br /><br />
+      <b>Messages are stored in clear text in the database.</b>
+    </p>
+    <button class="disclaimer-button" onclick="acceptDisclaimer()">I Accept</button>
+  </div>
+
+  <!-- Profile Creation Form -->
+  <form id="profile-form" class="profile-form" style="display: none;">
+    <h1 class="auth-title">Create Your Profile</h1>
+
+    <div class="profile-photo-container">
+      <img id="profile-photo" class="profile-photo" src="" alt="Profile Photo">
+      <button type="button" onclick="removeProfilePhoto()">Remove Photo</button>
+    </div>
+    
+    <div class="form-group">
+      <label class="form-label">Name</label>
+      <input type="text" class="form-input" id="profile-name" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Age</label>
+      <input type="number" class="form-input" id="profile-age" min="18" max="100" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Bio</label>
+      <textarea class="form-input" id="profile-bio" rows="3" required></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Interests</label>
+      <div class="interests-container" id="interests-container">
+      </div>
+    </div>
+    <button type="submit" class="auth-button">Create Profile</button>
+  </form>
+
+  <!-- Main App Container -->
+  <div id="app-container" style="display: none;">
+    <div id="card-container"></div>
+    <div class="buttons">
+      <button class="button dislike" onclick="handleDislike()">✕</button>
+      <button class="button like" onclick="handleLike()">❤️</button>
+      <button class="button matches" data-action="toggle-matches">
+        <span id="matches-count">0</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="matches-container" id="matches-container">
+    <div class="matches-header">
+      <h2>Your Matches</h2>
+      <button class="close-matches" onclick="toggleMatches()">&times;</button>
+    </div>
+    <div class="match-list" id="match-list">
+    </div>
+  </div>
+  
+  <!-- Chat Container -->
+  <div class="chat-container" id="chat-container">
+    <div class="chat-header">
+      <button class="back-button" onclick="closeChat()">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M15 18L9 12L15 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <h2></h2>
+    </div>
+    <div class="chat-messages" id="chat-messages">
+    </div>
+    <div class="chat-input-container">
+      <input type="text" class="chat-input" id="chat-input" placeholder="Type a message...">
+      <button class="send-button" onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+</body>
+</html>
