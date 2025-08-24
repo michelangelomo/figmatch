@@ -1190,8 +1190,8 @@
                         <h3>Download the Plugin</h3>
                         <p>Get the latest Figmatch plugin file from our exclusive repository. It's like getting into a
                             secret design speakeasy.</p>
-                        <div class="code-block" onclick="copyToClipboard('https://figmatch.love/download/plugin.zip')">
-                            https://figmatch.love/download/plugin.zip
+                        <div class="code-block" onclick="copyToClipboard('https://figmatch.love/download.html')">
+                            https://figmatch.love/download.html
                         </div>
                     </div>
                     <div class="step-card animate-on-scroll">
@@ -1199,8 +1199,8 @@
                         <h3>Extract the Files</h3>
                         <p>Unzip the downloaded file to a memorable location. We recommend a folder called "Love" on
                             your desktop for maximum visibility.</p>
-                        <div class="code-block" onclick="copyToClipboard('figmatch-plugin-v1.0/')">
-                            figmatch-plugin-v1.0/
+                        <div class="code-block">
+                            figmatch-main/
                         </div>
                     </div>
                     <div class="step-card animate-on-scroll">
@@ -1208,8 +1208,7 @@
                         <h3>Open figma Desktop</h3>
                         <p>Launch the figma desktop app. The web version won't work for local plugins - we're too
                             sophisticated for browsers.</p>
-                        <div class="code-block"
-                            onclick="copyToClipboard('Plugins → Development → Import plugin from manifest...')">
+                        <div class="code-block">
                             Plugins → Development → Import plugin from manifest...
                         </div>
                     </div>
@@ -1218,8 +1217,8 @@
                         <h3>Select manifest.json</h3>
                         <p>Navigate to the extracted folder and select the manifest.json file. This is where the magic
                             begins.</p>
-                        <div class="code-block" onclick="copyToClipboard('figmatch-plugin-v1.0/manifest.json')">
-                            figmatch-plugin-v1.0/manifest.json
+                        <div class="code-block">
+                            figmatch-main/figmatch/manifest.json
                         </div>
                     </div>
                     <div class="step-card animate-on-scroll">
@@ -1227,7 +1226,7 @@
                         <h3>Run the Plugin</h3>
                         <p>Go to Plugins → Development → Figmatch and launch it. Your love life is about to get a
                             serious upgrade.</p>
-                        <div class="code-block" onclick="copyToClipboard('Plugins → Development → Figmatch → Run')">
+                        <div class="code-block">
                             Plugins → Development → Figmatch → Run
                         </div>
                     </div>
@@ -1236,9 +1235,6 @@
                         <h3>Start Swiping</h3>
                         <p>Create your profile, set your design preferences, and start matching. Remember: good kerning
                             is a green flag.</p>
-                        <div class="code-block" onclick="copyToClipboard('Profile → Preferences → Start Matching')">
-                            Profile → Preferences → Start Matching
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1260,9 +1256,9 @@
                         shade of gray.
                     </div>
                     <div class="testimonial-author">
-                        <div class="author-avatar">JD</div>
+                        <div class="author-avatar">SM</div>
                         <div class="author-info">
-                            <h4>Jamie D.</h4>
+                            <h4>Skarra M.</h4>
                             <p>Product Designer</p>
                         </div>
                     </div>
@@ -1274,9 +1270,9 @@
                         It's true love.
                     </div>
                     <div class="testimonial-author">
-                        <div class="author-avatar">MK</div>
+                        <div class="author-avatar">MC</div>
                         <div class="author-info">
-                            <h4>Morgan K.</h4>
+                            <h4>Manu C.</h4>
                             <p>Senior UI Designer</p>
                         </div>
                     </div>
@@ -1304,7 +1300,8 @@
         <div class="container animate-on-scroll">
             <h2>Ready to Find Your Design Soulmate?</h2>
             <p>Join thousands of designers already swiping in Figma</p>
-            <a href="#download" class="btn">Download Figmatch</a>
+            <a href="https://github.com/michelangelomo/figmatch/archive/refs/heads/main.zip" class="btn">Download
+                Figmatch</a>
         </div>
     </section>
 
@@ -1333,17 +1330,20 @@
                     <p style="opacity: 0.7; margin-top: 1rem;">For designers. By designers. With love.</p>
                 </div>
                 <div class="footer-column">
-                    <h4>Get the Plugin</h4>
-                    <a href="#" class="footer-btn">Download Plugin</a>
+                    <h4>Get the source code</h4>
+                    <a href="https://github.com/michelangelomo/figmatch" class="footer-btn">Github</a>
                     <p style="opacity: 0.7;">Version 1.0 - Made with ❤️</p>
                     <p style="opacity: 0.5; font-size: 0.875rem; margin-top: 1rem;">Compatible with figma 116+</p>
                 </div>
             </div>
             <div class="copyright">
-                <p>© 2025 Figmatch. All hearts reserved. | <a href="#"
-                        style="color: #ff3333; text-decoration: none;">Privacy</a> | <a href="#"
-                        style="color: #ff3333; text-decoration: none;">Terms</a> | <a href="#"
-                        style="color: #ff3333; text-decoration: none;">Love Guidelines</a></p>
+                <p>© 2025 Figmatch. All hearts reserved.<br>
+                    <span style="font-size:0.95em; opacity:0.7;">We are not affiliated with Figma.</span><br>
+                    <a href="#" style="color: #ff3333; text-decoration: none;" onclick="alert('trust us')">Privacy</a> |
+                    <a href="#" style="color: #ff3333; text-decoration: none;" onclick="alert('term what?')">Terms</a> |
+                    <a href="#" style="color: #ff3333; text-decoration: none;" onclick="alert('ah-ah you tried')">Love
+                        Guidelines</a>
+                </p>
             </div>
         </div>
     </footer>
